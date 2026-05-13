@@ -572,7 +572,9 @@ impl BillPayments {
                     return Err(BillPaymentsError::UnauthorizedPause);
                 }
             }
-            Option::Some(admin) if admin != caller => return Err(BillPaymentsError::UnauthorizedPause),
+            Option::Some(admin) if admin != caller => {
+                return Err(BillPaymentsError::UnauthorizedPause)
+            }
             _ => {}
         }
         env.storage()
@@ -979,7 +981,9 @@ impl BillPayments {
                 .ok_or(Error::InvalidDueDate)?;
             // Advance forward by frequency periods until the next due date is strictly in the future
             while next_due_date <= current_time {
-                next_due_date = next_due_date.checked_add(period).ok_or(Error::InvalidDueDate)?;
+                next_due_date = next_due_date
+                    .checked_add(period)
+                    .ok_or(Error::InvalidDueDate)?;
             }
             let next_id = env
                 .storage()

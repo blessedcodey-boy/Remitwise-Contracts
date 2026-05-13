@@ -1216,7 +1216,11 @@ impl FamilyWallet {
             id = id.saturating_add(1);
         }
 
-        let next_cursor = if id < next_tx && last_returned != 0 { last_returned } else { 0u64 };
+        let next_cursor = if id < next_tx && last_returned != 0 {
+            last_returned
+        } else {
+            0u64
+        };
         let count = items.len();
 
         PendingTxPage {

@@ -807,11 +807,13 @@ impl ReportingContract {
             // Percentages are stored as basis points (bps), where 10000 = 100.00%
             for i in 0..split_percentages.len() {
                 let p = split_percentages.get(i).unwrap_or(0);
-                sum = sum.checked_add(p).ok_or(ReportingError::InvalidPercentageSplit)?;
+                sum = sum
+                    .checked_add(p)
+                    .ok_or(ReportingError::InvalidPercentageSplit)?;
                 if sum > 10000 {
                     return Err(ReportingError::InvalidPercentageSplit);
                 }
-                
+
                 // Formula used is (amount * percentage) / 10000
                 let amount = total_amount.checked_mul(p as i128).unwrap_or(0) / 10000;
                 split_amounts.push_back(amount);
@@ -1154,8 +1156,12 @@ impl ReportingContract {
         user.require_auth();
         let health_score =
             Self::calculate_health_score_internal(&env, user.clone(), total_remittance);
-        let remittance_summary =
-            Self::get_remittance_summary_internal(&env, total_remittance, period_start, period_end)?;
+        let remittance_summary = Self::get_remittance_summary_internal(
+            &env,
+            total_remittance,
+            period_start,
+            period_end,
+        )?;
         let savings_report =
             Self::get_savings_report_internal(&env, user.clone(), period_start, period_end);
         let bill_compliance =
@@ -1172,7 +1178,7 @@ impl ReportingContract {
 
         Ok(FinancialHealthReport {
             health_score: health_score?,
-            remittance_summary: remittance_summary?,
+            remittance_summary,
             savings_report: savings_report?,
             bill_compliance: bill_compliance?,
             insurance_report: insurance_report?,

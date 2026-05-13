@@ -7,14 +7,9 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
-use crate::{
-    ReportingContract, ReportingContractClient,
-};
+use crate::{ReportingContract, ReportingContractClient};
 
 // ============================================================================
 // TEST SETUP HELPERS
@@ -63,12 +58,16 @@ fn test_get_remittance_summary_requires_auth() {
     let user = Address::generate(&env);
 
     // Call the endpoint - it should enforce auth
-    let _result = client.get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
+    let _result =
+        client.get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
 
     // Verify auth was recorded
     let auths = env.auths();
     let found = auths.iter().any(|(addr, _)| *addr == user);
-    assert!(found, "get_remittance_summary must enforce auth for the user");
+    assert!(
+        found,
+        "get_remittance_summary must enforce auth for the user"
+    );
 }
 
 /// Test 2: get_remittance_summary succeeds with valid user
@@ -78,7 +77,8 @@ fn test_get_remittance_summary_success() {
     let (client, _admin) = setup_reporting(&env);
     let user = Address::generate(&env);
 
-    let result = client.try_get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
+    let result =
+        client.try_get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
     assert!(result.is_ok(), "call with valid user must succeed");
 }
 
@@ -101,7 +101,10 @@ fn test_get_stored_report_storage_isolation() {
     // user_b tries to read user_a's data
     // Storage key includes user_a, so user_b can't access it
     let result = client.get_stored_report(&user_a, &user_b, &202_401u64);
-    assert!(result.is_none(), "user_b must not access user_a's stored report via storage isolation");
+    assert!(
+        result.is_none(),
+        "user_b must not access user_a's stored report via storage isolation"
+    );
 }
 
 /// Test 4: get_stored_report with same user retrieves data
@@ -166,7 +169,8 @@ fn test_authorization_enforcement_present() {
     let user = Address::generate(&env);
 
     // This endpoint definitely calls require_auth()
-    let _result = client.get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
+    let _result =
+        client.get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
 
     let auths = env.auths();
     let found = auths.iter().any(|(addr, _)| *addr == user);
@@ -227,7 +231,10 @@ fn test_sc_003_auth_enforcement() {
 
     let auths = env.auths();
     let found = auths.iter().any(|(addr, _)| *addr == user);
-    assert!(found, "SC-003: All query endpoints must enforce require_auth()");
+    assert!(
+        found,
+        "SC-003: All query endpoints must enforce require_auth()"
+    );
 }
 
 /// Test 11: SC-003 Criterion 2 - Unauthorized access rejection
@@ -243,7 +250,10 @@ fn test_sc_003_unauthorized_rejection() {
 
     // Attacker tries to access owner's report
     let stolen = client.get_stored_report(&owner, &attacker, &202_401u64);
-    assert!(stolen.is_none(), "SC-003: Unauthorized access must be rejected");
+    assert!(
+        stolen.is_none(),
+        "SC-003: Unauthorized access must be rejected"
+    );
 }
 
 /// Test 12: SC-003 Criterion 3 - Query isolation
@@ -279,7 +289,8 @@ fn test_all_report_endpoints_accessible() {
     let user = Address::generate(&env);
 
     // All endpoints should be callable
-    let _ = client.try_get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
+    let _ =
+        client.try_get_remittance_summary(&user, &10_000i128, &1_704_067_200u64, &1_706_745_600u64);
     let _ = client.try_get_stored_report(&user, &user, &1u64);
     let _ = client.get_archived_reports(&user);
 

@@ -310,7 +310,10 @@ fn test_set_external_ref_authorization_non_owner_cannot_set() {
 
     // Verify the external_ref was not changed
     let policy = client.get_policy(&id).unwrap();
-    assert!(policy.external_ref.is_none(), "policy external_ref must remain unchanged");
+    assert!(
+        policy.external_ref.is_none(),
+        "policy external_ref must remain unchanged"
+    );
 }
 
 /// Only the policy owner can clear an external_ref on an existing policy.
@@ -336,7 +339,8 @@ fn test_set_external_ref_authorization_non_owner_cannot_clear() {
     // Verify the external_ref still exists
     let policy = client.get_policy(&id).unwrap();
     assert_eq!(
-        policy.external_ref, Some(ext_ref),
+        policy.external_ref,
+        Some(ext_ref),
         "policy external_ref must remain unchanged"
     );
 }
@@ -426,7 +430,8 @@ fn test_set_external_ref_cleared_ref_can_be_reused() {
     // Verify policy 2 now has the ref
     let policy2 = client.get_policy(&id2).unwrap();
     assert_eq!(
-        policy2.external_ref, Some(ref_str.clone()),
+        policy2.external_ref,
+        Some(ref_str.clone()),
         "policy 2 must have the reused external_ref"
     );
 
@@ -485,7 +490,8 @@ fn test_set_external_ref_index_update_removes_old_adds_new() {
     // Verify policy has the new_ref
     let policy = client.get_policy(&id).unwrap();
     assert_eq!(
-        policy.external_ref, Some(new_ref),
+        policy.external_ref,
+        Some(new_ref),
         "policy must have new external_ref"
     );
 }

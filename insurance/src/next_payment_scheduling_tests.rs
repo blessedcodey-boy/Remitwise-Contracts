@@ -18,8 +18,8 @@ use soroban_sdk::{
 // Constants: Timing and Payment Schedule
 // =============================================================================
 
-const MONTH_SECONDS: u64 = 30 * 86_400;  // 30 days in seconds
-const DAY_SECONDS: u64 = 86_400;          // 1 day in seconds
+const MONTH_SECONDS: u64 = 30 * 86_400; // 30 days in seconds
+const DAY_SECONDS: u64 = 86_400; // 1 day in seconds
 
 // =============================================================================
 // Helpers: Setup and Utilities
@@ -86,7 +86,8 @@ fn test_on_time_payment_at_exact_boundary() {
     );
 
     // Advance to exactly the payment deadline
-    env.ledger().with_mut(|li| li.timestamp = initial_next_payment);
+    env.ledger()
+        .with_mut(|li| li.timestamp = initial_next_payment);
     client.pay_premium(&owner, &policy_id);
 
     let policy = client.get_policy(&policy_id).unwrap();
@@ -122,7 +123,8 @@ fn test_on_time_payment_one_second_before_boundary() {
 
     // Advance to one second before the payment deadline
     let time_before_deadline = initial_next_payment.saturating_sub(1);
-    env.ledger().with_mut(|li| li.timestamp = time_before_deadline);
+    env.ledger()
+        .with_mut(|li| li.timestamp = time_before_deadline);
 
     client.pay_premium(&owner, &policy_id);
 
@@ -160,7 +162,8 @@ fn test_on_time_payment_one_second_after_boundary() {
 
     // Advance to one second past the payment deadline
     let time_after_deadline = initial_next_payment.saturating_add(1);
-    env.ledger().with_mut(|li| li.timestamp = time_after_deadline);
+    env.ledger()
+        .with_mut(|li| li.timestamp = time_after_deadline);
 
     client.pay_premium(&owner, &policy_id);
 
@@ -302,7 +305,8 @@ fn test_missed_payment_two_months() {
 
     // Advance 60 days (2 months) past creation — one full missed period
     let missed_payment_time = creation_time + (60 * DAY_SECONDS);
-    env.ledger().with_mut(|li| li.timestamp = missed_payment_time);
+    env.ledger()
+        .with_mut(|li| li.timestamp = missed_payment_time);
 
     client.pay_premium(&owner, &policy_id);
 
@@ -334,7 +338,8 @@ fn test_missed_payment_three_months() {
     let _initial_next_payment = client.get_policy(&policy_id).unwrap().next_payment_date;
 
     let missed_payment_time = creation_time + (90 * DAY_SECONDS);
-    env.ledger().with_mut(|li| li.timestamp = missed_payment_time);
+    env.ledger()
+        .with_mut(|li| li.timestamp = missed_payment_time);
 
     client.pay_premium(&owner, &policy_id);
 
@@ -361,7 +366,8 @@ fn test_missed_payment_one_year() {
     let _initial_next_payment = client.get_policy(&policy_id).unwrap().next_payment_date;
 
     let missed_payment_time = creation_time + (365 * DAY_SECONDS);
-    env.ledger().with_mut(|li| li.timestamp = missed_payment_time);
+    env.ledger()
+        .with_mut(|li| li.timestamp = missed_payment_time);
 
     client.pay_premium(&owner, &policy_id);
 
@@ -582,14 +588,18 @@ fn test_payment_near_max_timestamp() {
 
     let created_next = policy.next_payment_date;
 
-    env.ledger().with_mut(|li| li.timestamp = created_next.min(near_max + MONTH_SECONDS));
+    env.ledger()
+        .with_mut(|li| li.timestamp = created_next.min(near_max + MONTH_SECONDS));
     client.pay_premium(&owner, &policy_id);
 
     let policy = client.get_policy(&policy_id).unwrap();
     let new_next = policy.next_payment_date;
 
     // The important invariant: new_next >= created_next
-    assert!(new_next >= created_next || new_next == 0, "Schedule must not go backward");
+    assert!(
+        new_next >= created_next || new_next == 0,
+        "Schedule must not go backward"
+    );
 }
 
 /// Test: Batch payment updates all policies' next_payment_date correctly.
@@ -608,7 +618,8 @@ fn test_batch_pay_premiums_updates_next_payment_date_uniformly() {
     let ids = soroban_sdk::vec![&env, policy_id_1, policy_id_2, policy_id_3];
 
     let batch_payment_time = creation_time + (40 * DAY_SECONDS);
-    env.ledger().with_mut(|li| li.timestamp = batch_payment_time);
+    env.ledger()
+        .with_mut(|li| li.timestamp = batch_payment_time);
 
     client.batch_pay_premiums(&owner, &ids);
 

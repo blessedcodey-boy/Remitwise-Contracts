@@ -494,7 +494,10 @@ fn test_verify_dependency_address_set_does_not_write_storage() {
 
     let stored_addrs: Option<ContractAddresses> =
         env.storage().instance().get(&symbol_short!("ADDRESSES"));
-    assert!(stored_addrs.is_none(), "ADDRESSES must not be written by preflight");
+    assert!(
+        stored_addrs.is_none(),
+        "ADDRESSES must not be written by preflight"
+    );
 }
 
 #[test]
@@ -539,8 +542,14 @@ fn test_verify_dependency_address_set_deterministic_error() {
 
     let result1 = client.try_verify_dependency_address_set(&addrs);
     let result2 = client.try_verify_dependency_address_set(&addrs);
-    assert!(matches!(result1, Err(Ok(ReportingError::InvalidDependencyAddressConfiguration))));
-    assert!(matches!(result2, Err(Ok(ReportingError::InvalidDependencyAddressConfiguration))));
+    assert!(matches!(
+        result1,
+        Err(Ok(ReportingError::InvalidDependencyAddressConfiguration))
+    ));
+    assert!(matches!(
+        result2,
+        Err(Ok(ReportingError::InvalidDependencyAddressConfiguration))
+    ));
 }
 
 #[test]
