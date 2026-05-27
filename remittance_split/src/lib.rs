@@ -2176,11 +2176,7 @@ impl RemittanceSplit {
         }
 
         // Validate CONFIG exists (ensures contract is initialized)
-        let _config: SplitConfig = match env
-            .storage()
-            .instance()
-            .get(&symbol_short!("CONFIG"))
-        {
+        let _config: SplitConfig = match env.storage().instance().get(&symbol_short!("CONFIG")) {
             Some(c) => c,
             None => return Vec::new(&env),
         };

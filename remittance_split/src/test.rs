@@ -304,7 +304,7 @@ fn test_execute_due_remittance_schedules_basic() {
 
     // Create a one-shot schedule due at time 3000
     let schedule_id = client.create_remittance_schedule(&owner, &1_000, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance time past due date
     set_time(&env, 3_500);
@@ -330,7 +330,7 @@ fn test_execute_recurring_remittance_schedule() {
 
     // Create a recurring schedule: 1000 amount, due at 3000, every 86400 seconds
     let schedule_id = client.create_remittance_schedule(&owner, &1_000, &3_000, &86_400);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance time past first due date
     set_time(&env, 3_500);
@@ -357,7 +357,7 @@ fn test_execute_missed_remittance_schedules() {
 
     // Create a recurring schedule
     let schedule_id = client.create_remittance_schedule(&owner, &500, &3_000, &86_400);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance time far past multiple intervals: 3000 + 86400*3 + 100
     set_time(&env, 3_000 + 86_400 * 3 + 100);
@@ -382,7 +382,7 @@ fn test_execute_idempotent_oneshot() {
 
     // Create one-shot schedule
     let schedule_id = client.create_remittance_schedule(&owner, &750, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance time past due
     set_time(&env, 3_500);
@@ -412,7 +412,7 @@ fn test_execute_idempotent_recurring() {
 
     // Create recurring schedule
     let schedule_id = client.create_remittance_schedule(&owner, &300, &3_000, &86_400);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     set_time(&env, 3_500);
 
@@ -441,8 +441,8 @@ fn test_execute_skips_inactive_schedules() {
 
     // Create schedule and cancel it
     let schedule_id = client.create_remittance_schedule(&owner, &200, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
-    
+    assert_eq!(schedule_id, 1);
+
     client.cancel_remittance_schedule(&owner, &1);
 
     // Advance past due time
@@ -463,7 +463,7 @@ fn test_execute_skips_not_yet_due() {
 
     // Create schedule due at 3000
     let schedule_id = client.create_remittance_schedule(&owner, &400, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance time but stay before due date
     set_time(&env, 2_500);
@@ -488,7 +488,7 @@ fn test_execute_exactly_equal_next_due() {
 
     // Create schedule
     let schedule_id = client.create_remittance_schedule(&owner, &600, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Advance exactly to next_due (edge case: == not just >)
     set_time(&env, 3_000);
@@ -523,8 +523,13 @@ fn test_execute_all_inactive_set() {
 
     // Create and cancel multiple schedules
     for i in 1..=3 {
-        let id = client.create_remittance_schedule(&owner, &100 * i as i128, &(3_000 + i as u64 * 1000), &0);
-        assert!(id.is_ok());
+        let id = client.create_remittance_schedule(
+            &owner,
+            &(100 * i as i128),
+            &(3_000 + i as u64 * 1000),
+            &0,
+        );
+        assert!(id > 0);
         client.cancel_remittance_schedule(&owner, &(i as u32));
     }
 
@@ -545,10 +550,10 @@ fn test_execute_paused_contract_returns_empty() {
 
     // Create schedule
     let schedule_id = client.create_remittance_schedule(&owner, &500, &3_000, &0);
-    assert_eq!(schedule_id, Ok(1));
+    assert_eq!(schedule_id, 1);
 
     // Pause contract
-    client.pause(&owner).unwrap();
+    client.pause(&owner);
 
     set_time(&env, 3_500);
 
@@ -572,11 +577,11 @@ fn test_execute_mixed_due_not_due() {
 
     // Create schedule 1: due at 2000 (one-off)
     let id1 = client.create_remittance_schedule(&owner, &100, &2_000, &0);
-    assert_eq!(id1, Ok(1));
+    assert_eq!(id1, 1);
 
     // Create schedule 2: due at 4000 (one-off)
     let id2 = client.create_remittance_schedule(&owner, &200, &4_000, &0);
-    assert_eq!(id2, Ok(2));
+    assert_eq!(id2, 2);
 
     // Advance to time 3000 (only schedule 1 is due)
     set_time(&env, 3_000);
@@ -588,10 +593,4 @@ fn test_execute_mixed_due_not_due() {
     // Verify only schedule 1 is inactive
     assert!(!client.get_remittance_schedule(&1).unwrap().active);
     assert!(client.get_remittance_schedule(&2).unwrap().active);
-}
-
-// Helper function to invoke execute_due_remittance_schedules via client
-// (Note: You may need to add this to the RemittanceSplitClient or call directly)
-pub fn set_time(env: &Env, timestamp: u64) {
-    env.ledger().set_timestamp(timestamp);
 }

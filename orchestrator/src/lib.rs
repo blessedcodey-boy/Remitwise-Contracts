@@ -1,7 +1,9 @@
 #![no_std]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Map,
+    Symbol, Vec,
 };
 
 mod interface {
@@ -33,26 +35,14 @@ mod interface {
     }
 }
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum OrchestratorError {
-    ReentrancyDetected = 10,
-    PermissionDenied = 11,
-    InvalidAmount = 12,
-}
-
 #[contracttype]
 #[derive(Clone)]
 pub struct OrchestratorAuditEntry {
     pub operation: Symbol,
     pub caller: Address,
-#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
-
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Map,
-    Symbol, Vec,
-};
+    pub timestamp: u64,
+    pub success: bool,
+}
 
 use remitwise_common::{EventCategory, EventPriority, RemitwiseEvents, CONTRACT_VERSION};
 
@@ -79,7 +69,6 @@ pub struct AuditEntry {
 
 const EXEC_LOCK: Symbol = symbol_short!("EXEC_LOCK");
 const AUDIT: Symbol = symbol_short!("AUDIT");
-const MAX_AUDIT_ENTRIES: u32 = 100;
 
 /// RAII guard to ensure the execution lock is released on drop.
 pub struct LockGuard {
@@ -90,6 +79,8 @@ impl Drop for LockGuard {
     fn drop(&mut self) {
         self.env.storage().instance().set(&EXEC_LOCK, &false);
     }
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExecutionStats {
@@ -141,7 +132,7 @@ impl Orchestrator {
             return Err(OrchestratorError::InvalidAmount);
         }
 
-        // Use a scope to ensure the guard is dropped (and lock released) 
+        // Use a scope to ensure the guard is dropped (and lock released)
         // before we audit and return.
         let result = {
             /// The guard acquires the lock on creation and releases it on drop.
@@ -184,17 +175,17 @@ impl Orchestrator {
     ) -> Result<(), OrchestratorError> {
         // Use interfaces to call downstream contracts
         // This is a simplified implementation of the flow logic
-        
+
         // 1. Check permission/spending limit
         let fw_client = interface::FamilyWalletClient::new(env, family_wallet);
         if !fw_client.check_spending_limit(caller, &total_amount) {
-            return Err(OrchestratorError::PermissionDenied);
+            return Err(OrchestratorError::Unauthorized);
         }
 
         // 2. Calculate split
         let rs_client = interface::RemittanceSplitClient::new(env, remittance_split);
         let allocations = rs_client.calculate_split(&total_amount);
-        
+
         if allocations.len() < 4 {
             return Err(OrchestratorError::InvalidAmount);
         }
@@ -218,6 +209,11 @@ impl Orchestrator {
         if insurance_amt > 0 {
             let i_client = interface::InsuranceClient::new(env, insurance);
             i_client.pay_premium(caller, &policy_id, &insurance_amt);
+        }
+
+        Ok(())
+    }
+
     /// Initialize the orchestrator with dependency contract addresses.
     ///
     /// # Arguments
@@ -352,7 +348,7 @@ impl Orchestrator {
     /// - `InvalidNonce` if nonce is invalid
     /// - `NonceAlreadyUsed` if nonce was already used
     /// - `ExecutionLocked` if reentrancy detected
-    pub fn execute_remittance_flow(
+    pub fn execute_remittance_flow_signed(
         env: Env,
         executor: Address,
         amount: i128,
@@ -617,7 +613,7 @@ impl Orchestrator {
     fn acquire_execution_lock(env: &Env) -> Result<LockGuard, OrchestratorError> {
         let is_locked: bool = env.storage().instance().get(&EXEC_LOCK).unwrap_or(false);
         if is_locked {
-            return Err(OrchestratorError::ReentrancyDetected);
+            return Err(OrchestratorError::ExecutionLocked);
         }
         env.storage().instance().set(&EXEC_LOCK, &true);
         Ok(LockGuard { env: env.clone() })
@@ -625,30 +621,33 @@ impl Orchestrator {
 
     fn append_audit(env: &Env, operation: Symbol, caller: &Address, success: bool) {
         let timestamp = env.ledger().timestamp();
-        let mut log: Vec<OrchestratorAuditEntry> = env
+        let mut log: Vec<AuditEntry> = env
             .storage()
             .instance()
             .get(&AUDIT)
             .unwrap_or_else(|| Vec::new(env));
-        
         if log.len() >= MAX_AUDIT_ENTRIES {
-            log.remove(0);
+            let mut new_log = Vec::new(env);
+            for i in 1..log.len() {
+                if let Some(entry) = log.get(i) {
+                    new_log.push_back(entry);
+                }
+            }
+            log = new_log;
         }
-        
-        log.push_back(OrchestratorAuditEntry {
+        log.push_back(AuditEntry {
             operation,
-            caller: caller.clone(),
+            executor: caller.clone(),
             timestamp,
             success,
         });
-        
         env.storage().instance().set(&AUDIT, &log);
     }
 
     pub fn get_execution_state(env: Env) -> bool {
         env.storage().instance().get(&EXEC_LOCK).unwrap_or(false)
     }
-}
+
     fn is_nonce_used(env: &Env, address: &Address, nonce: u64) -> bool {
         let key = symbol_short!("USED_N");
         let map: Option<Map<Address, Vec<u64>>> = env.storage().instance().get(&key);
@@ -723,34 +722,6 @@ impl Orchestrator {
             .wrapping_add(amt_hi)
             .wrapping_add(deadline)
             .wrapping_mul(1_000_000_007)
-    }
-
-    fn append_audit(env: &Env, operation: Symbol, _executor: &Address, success: bool) {
-        let timestamp = env.ledger().timestamp();
-        let mut log: Vec<AuditEntry> = env
-            .storage()
-            .instance()
-            .get(&symbol_short!("AUDIT"))
-            .unwrap_or_else(|| Vec::new(env));
-
-        if log.len() >= MAX_AUDIT_ENTRIES {
-            let mut new_log = Vec::new(env);
-            for i in 1..log.len() {
-                if let Some(entry) = log.get(i) {
-                    new_log.push_back(entry);
-                }
-            }
-            log = new_log;
-        }
-
-        log.push_back(AuditEntry {
-            operation,
-            executor: _executor.clone(),
-            timestamp,
-            success,
-        });
-
-        env.storage().instance().set(&symbol_short!("AUDIT"), &log);
     }
 
     fn update_execution_stats(env: &Env, success: bool) {
