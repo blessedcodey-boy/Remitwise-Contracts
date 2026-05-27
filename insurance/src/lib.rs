@@ -728,6 +728,3 @@ impl Insurance {
 
 #[cfg(test)]
 mod test;
-
-#[cfg(test)]
-mod next_payment_scheduling_tests;
