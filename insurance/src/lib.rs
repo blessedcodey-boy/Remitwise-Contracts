@@ -36,6 +36,7 @@ const INSTANCE_BUMP_AMOUNT: u32 = 518_400; // ~30 days
 // Pagination constants
 pub const DEFAULT_PAGE_LIMIT: u32 = 20;
 pub const MAX_PAGE_LIMIT: u32 = 50;
+const PAYMENT_PERIOD_SECONDS: u64 = 30 * 86_400;
 
 /// Maximum number of active policies a single owner may hold.
 pub const MAX_POLICIES_PER_OWNER: u32 = 50;
@@ -145,8 +146,11 @@ pub struct ArchivedPolicy {
 #[contracttype]
 #[derive(Clone)]
 pub struct PolicyPage {
+    /// Active policies returned for this page.
     pub items: Vec<InsurancePolicy>,
+    /// Cursor to resume from on the next call. `0` means end-of-list.
     pub next_cursor: u32,
+    /// Number of items returned in `items`.
     pub count: u32,
 }
 
@@ -365,7 +369,10 @@ impl Insurance {
             monthly_premium,
             coverage_amount,
             active: true,
-            next_payment_date: env.ledger().timestamp() + (30 * 86_400),
+            next_payment_date: env
+                .ledger()
+                .timestamp()
+                .saturating_add(PAYMENT_PERIOD_SECONDS),
         };
 
         Self::bind_external_ref(&env, &owner, next_id, &external_ref);
@@ -805,6 +812,10 @@ impl Insurance {
         index.get((owner, external_ref))
     }
 
+    /// Pays one premium and advances `next_payment_date` by the fixed 30-day cadence.
+    ///
+    /// The resulting due date is always in the future and is mirrored in
+    /// `PremiumPaidEvent.next_payment_date`.
     pub fn pay_premium(env: Env, caller: Address, policy_id: u32) -> bool {
         caller.require_auth();
         Self::extend_instance_ttl(&env);
@@ -823,7 +834,8 @@ impl Insurance {
         }
 
         let amount = policy.monthly_premium;
-        policy.next_payment_date = env.ledger().timestamp() + (30 * 86_400);
+        let now = env.ledger().timestamp();
+        policy.next_payment_date = Self::advance_next_payment_date(policy.next_payment_date, now);
         let next_payment_date = policy.next_payment_date;
         policies.set(policy_id, policy);
         env.storage().instance().set(&KEY_POLICIES, &policies);
@@ -838,13 +850,15 @@ impl Insurance {
                 owner: caller,
                 amount,
                 next_payment_date,
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
             },
         );
 
         true
     }
 
+    /// Pays premiums in batch and advances each policy's due date independently
+    /// using that policy's own `next_payment_date` plus fixed 30-day cadence rules.
     pub fn batch_pay_premiums(env: Env, caller: Address, policy_ids: Vec<u32>) -> u32 {
         caller.require_auth();
         Self::extend_instance_ttl(&env);
@@ -857,12 +871,12 @@ impl Insurance {
 
         let mut count: u32 = 0;
         let now = env.ledger().timestamp();
-        let next_date = now + (30 * 86_400);
 
         for id in policy_ids.iter() {
             if let Some(mut p) = policies.get(id) {
                 if p.owner == caller && p.active {
                     let amount = p.monthly_premium;
+                    let next_date = Self::advance_next_payment_date(p.next_payment_date, now);
                     p.next_payment_date = next_date;
                     policies.set(id, p);
 
@@ -935,26 +949,31 @@ impl Insurance {
             .get(&KEY_OWNER_INDEX)
             .unwrap_or_else(|| Map::new(&env));
         let ids = index.get(owner).unwrap_or_else(|| Vec::new(&env));
+        let sorted_ids = Self::sorted_unique_ids(&env, ids);
 
         let mut items: Vec<InsurancePolicy> = Vec::new(&env);
         let mut next_cursor: u32 = 0;
+        let mut has_more = false;
 
-        for id in ids.iter() {
+        // Bounded read: iterate owner-indexed ids only (not the entire policy map).
+        for id in sorted_ids.iter() {
             if id <= cursor {
                 continue;
             }
             if let Some(p) = policies.get(id) {
                 if p.active {
-                    items.push_back(p);
-                    next_cursor = id;
-                    if items.len() >= limit {
+                    if items.len() < limit {
+                        items.push_back(p);
+                        next_cursor = id;
+                    } else {
+                        has_more = true;
                         break;
                     }
                 }
             }
         }
 
-        let out_cursor = if items.len() < limit { 0 } else { next_cursor };
+        let out_cursor = if has_more { next_cursor } else { 0 };
         PolicyPage {
             items: items.clone(),
             next_cursor: out_cursor,
