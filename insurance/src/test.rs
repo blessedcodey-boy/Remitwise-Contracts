@@ -7,7 +7,6 @@ mod test {
         assert!(true);
     }
 }
-#![cfg(test)]
 
 use super::*;
 use remitwise_common::{EventCategory, EventPriority};
