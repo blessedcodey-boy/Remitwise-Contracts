@@ -796,4 +796,5 @@ impl Orchestrator {
 }
 
 #[cfg(test)]
+#[path = "test.rs"]
 mod test;
