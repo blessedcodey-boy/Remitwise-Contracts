@@ -54,13 +54,10 @@ pub enum InsuranceError {
     PolicyNotFound = 1,
     Unauthorized = 2,
     PolicyLimitExceeded = 3,
-    PolicyInactive = 4,
-    InvalidExternalRef = 5,
-    DuplicateExternalRef = 6,
-    MonthlyPremiumTooLow = 7,
-    CoverageAmountTooLow = 8,
-    MonthlyPremiumTooHigh = 9,
-    CoverageAmountTooHigh = 10,
+    InvalidExternalRef = 4,
+    DuplicateExternalRef = 5,
+    /// Tag content contains invalid characters (must be [a-z0-9-_])
+    InvalidTagContent = 6,
 }
 
 pub const EVT_POLICY_CREATED: Symbol = symbol_short!("created");
@@ -120,6 +117,7 @@ pub struct InsurancePolicy {
     pub coverage_amount: i128,
     pub active: bool,
     pub next_payment_date: u64,
+    pub tags: Vec<String>,
 }
 
 #[contracttype]
@@ -134,6 +132,7 @@ pub struct ArchivedPolicy {
     pub coverage_amount: i128,
     pub archived_at: u64,
     pub next_payment_date: u64,
+    pub tags: Vec<String>,
 }
 
 #[contracttype]
@@ -385,6 +384,7 @@ impl Insurance {
                 .ledger()
                 .timestamp()
                 .saturating_add(PAYMENT_PERIOD_SECONDS),
+            tags: Vec::new(&env),
         };
 
         // Store policy
@@ -675,6 +675,41 @@ impl Insurance {
             Ok(v) => v,
             Err(_) => false,
         }
+
+        if policy.active {
+            Self::unbind_external_ref(&env, &caller, policy_id, &policy.external_ref);
+            Self::adjust_owner_active(&env, &caller, -1);
+            let mut stats = Self::read_stats(&env);
+            stats.active_policies = stats.active_policies.saturating_sub(1);
+            Self::write_stats(&env, stats);
+        }
+
+        archived.set(
+            policy_id,
+            ArchivedPolicy {
+                id: policy.id,
+                owner: policy.owner,
+                name: policy.name,
+                external_ref: policy.external_ref,
+                coverage_type: policy.coverage_type,
+                monthly_premium: policy.monthly_premium,
+                coverage_amount: policy.coverage_amount,
+                archived_at: env.ledger().timestamp(),
+                next_payment_date: policy.next_payment_date,
+                tags: policy.tags,
+            },
+        );
+        policies.remove(policy_id);
+
+        env.storage().instance().set(&KEY_POLICIES, &policies);
+        env.storage().instance().set(&KEY_ARCHIVED, &archived);
+
+        let mut stats = Self::read_stats(&env);
+        stats.archived_policies += 1;
+        stats.last_updated = env.ledger().timestamp();
+        Self::write_stats(&env, stats);
+
+        true
     }
 
     pub fn restore_policy(env: Env, caller: Address, policy_id: u32) -> bool {
@@ -725,6 +760,7 @@ impl Insurance {
                 coverage_amount: record.coverage_amount,
                 active: true,
                 next_payment_date: record.next_payment_date,
+                tags: record.tags,
             },
         );
         archived.remove(policy_id);
@@ -969,6 +1005,129 @@ impl Insurance {
     pub fn get_storage_stats(env: Env) -> StorageStats {
         Self::extend_instance_ttl(&env);
         Self::read_stats(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Tag management
+    // -----------------------------------------------------------------------
+
+    /// Validates and canonicalizes a tag batch for metadata operations.
+    ///
+    /// Delegates to the shared [`remitwise_common::canonicalize_tags`] helper.
+    /// Invalid characters are reported as [`InsuranceError::InvalidTagContent`].
+    fn validate_and_normalize_tags(env: &Env, tags: &Vec<String>) -> Vec<String> {
+        remitwise_common::canonicalize_tags(env, tags, || {
+            soroban_sdk::panic_with_error!(env, InsuranceError::InvalidTagContent)
+        })
+    }
+
+    /// Adds tags to a policy's metadata.
+    ///
+    /// Security:
+    /// - `caller` must authorize the invocation.
+    /// - Only the policy owner can add tags.
+    ///
+    /// Notes:
+    /// - Tags are validated and normalized (lowercase, trimmed charset).
+    /// - Emits `(insurance, tags_add)` with `(policy_id, caller, tags)`.
+    pub fn add_tags_to_policy(env: Env, caller: Address, policy_id: u32, tags: Vec<String>) {
+        caller.require_auth();
+        let normalized_tags = Self::validate_and_normalize_tags(&env, &tags);
+        Self::extend_instance_ttl(&env);
+
+        let mut policies: Map<u32, InsurancePolicy> = env
+            .storage()
+            .instance()
+            .get(&KEY_POLICIES)
+            .unwrap_or_else(|| Map::new(&env));
+
+        let mut policy = match policies.get(policy_id) {
+            Some(p) => p,
+            None => panic!("Policy not found"),
+        };
+
+        if policy.owner != caller {
+            panic!("Only the policy owner can add tags");
+        }
+
+        for tag in normalized_tags.iter() {
+            policy.tags.push_back(tag);
+        }
+
+        policies.set(policy_id, policy);
+        env.storage().instance().set(&KEY_POLICIES, &policies);
+
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("tags_add"),
+            (policy_id, caller.clone(), tags.clone()),
+        );
+        env.events().publish(
+            (symbol_short!("insurance"), symbol_short!("tags_add")),
+            (policy_id, caller, tags),
+        );
+    }
+
+    /// Removes tags from a policy's metadata.
+    ///
+    /// Security:
+    /// - `caller` must authorize the invocation.
+    /// - Only the policy owner can remove tags.
+    ///
+    /// Notes:
+    /// - Removing a tag that is not present is a no-op.
+    /// - Emits `(insurance, tags_rem)` with `(policy_id, caller, tags)`.
+    pub fn remove_tags_from_policy(env: Env, caller: Address, policy_id: u32, tags: Vec<String>) {
+        caller.require_auth();
+        let normalized_tags = Self::validate_and_normalize_tags(&env, &tags);
+        Self::extend_instance_ttl(&env);
+
+        let mut policies: Map<u32, InsurancePolicy> = env
+            .storage()
+            .instance()
+            .get(&KEY_POLICIES)
+            .unwrap_or_else(|| Map::new(&env));
+
+        let mut policy = match policies.get(policy_id) {
+            Some(p) => p,
+            None => panic!("Policy not found"),
+        };
+
+        if policy.owner != caller {
+            panic!("Only the policy owner can remove tags");
+        }
+
+        let mut remaining = Vec::new(&env);
+        for existing_tag in policy.tags.iter() {
+            let mut should_remove = false;
+            for tag_to_remove in normalized_tags.iter() {
+                if existing_tag == tag_to_remove {
+                    should_remove = true;
+                    break;
+                }
+            }
+            if !should_remove {
+                remaining.push_back(existing_tag);
+            }
+        }
+        policy.tags = remaining;
+
+        policies.set(policy_id, policy);
+        env.storage().instance().set(&KEY_POLICIES, &policies);
+
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("tags_rem"),
+            (policy_id, caller.clone(), tags.clone()),
+        );
+        env.events().publish(
+            (symbol_short!("insurance"), symbol_short!("tags_rem")),
+            (policy_id, caller, tags),
+        );
     }
 }
 
