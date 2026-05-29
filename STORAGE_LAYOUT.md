@@ -85,9 +85,17 @@ Using these helpers prevents the common mistake of swapping `threshold` and `bum
 | `UPG_ADM`   | `Address`                      | Upgrade admin                                                |
 | `VERSION`   | `u32`                          | Contract version                                             |
 
+### Keys and value types (persistent storage)
+
+| Key               | Type                 | Notes                                                     |
+| ----------------- | -------------------- | --------------------------------------------------------- |
+| `Schedule(u32)`   | `RemittanceSchedule` | Individual remittance schedule                            |
+| `OwnerSchedules`  | `Vec<u32>`           | Per-owner index of schedule IDs, ordered by ID ascending  |
+
 ### TTL and IDs
 
-- TTL bumps on mutating flows via `extend_instance_ttl`.
+- **Instance TTL**: `CONFIG`, `SPLIT`, and other administrative keys are bumped on every access (read/write) using `INSTANCE_BUMP_AMOUNT` / `INSTANCE_LIFETIME_THRESHOLD`.
+- **Persistent TTL**: `RemittanceSchedule` and the `OwnerSchedules` index are bumped on every access using `PERSISTENT_BUMP_AMOUNT` / `PERSISTENT_LIFETIME_THRESHOLD`.
 - Schedule IDs allocate from `NEXT_RSCH` (`0 -> 1 -> 2 ...`).
 
 ### Savings Goals Storage (Scalable DataKey Pattern)
