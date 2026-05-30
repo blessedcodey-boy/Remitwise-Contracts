@@ -6,7 +6,10 @@ mod events_schema_test;
 #[cfg(test)]
 mod test;
 
-use remitwise_common::{clamp_limit, EventCategory, EventPriority, RemitwiseEvents};
+use remitwise_common::{
+    clamp_limit, EventCategory, EventPriority, RemitwiseEvents, INSTANCE_BUMP_AMOUNT,
+    INSTANCE_LIFETIME_THRESHOLD, PERSISTENT_BUMP_AMOUNT, PERSISTENT_LIFETIME_THRESHOLD,
+};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient, vec,
     Address, Bytes, BytesN, Env, IntoVal, Map, Symbol, Vec,
@@ -106,9 +109,6 @@ pub struct DistributeUsdcRequest {
     pub deadline: u64,
 }
 
-// Storage TTL constants
-const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day
-const INSTANCE_BUMP_AMOUNT: u32 = 518400; // ~30 days
 /// Maximum number of used nonces tracked per address before the oldest are pruned.
 const MAX_USED_NONCES_PER_ADDR: u32 = 256;
 /// Maximum number of remittance schedules allowed per owner to prevent storage bloat.
@@ -360,9 +360,11 @@ pub struct RemittanceSplit;
 #[contractimpl]
 impl RemittanceSplit {
     fn get_pause_admin(env: &Env) -> Option<Address> {
+        Self::extend_instance_ttl(env);
         env.storage().instance().get(&symbol_short!("PAUSE_ADM"))
     }
     fn get_global_paused(env: &Env) -> bool {
+        Self::extend_instance_ttl(env);
         env.storage()
             .instance()
             .get(&symbol_short!("PAUSED"))
@@ -395,6 +397,7 @@ impl RemittanceSplit {
         new_admin: Address,
     ) -> Result<(), RemittanceSplitError> {
         caller.require_auth();
+        Self::extend_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         let config: SplitConfig = env
             .storage()
@@ -426,6 +429,7 @@ impl RemittanceSplit {
     /// - `Unauthorized` if `caller` is not the active pause admin or the contract is already paused
     pub fn pause(env: Env, caller: Address) -> Result<(), RemittanceSplitError> {
         caller.require_auth();
+        Self::extend_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         let config: SplitConfig = env
             .storage()
@@ -461,6 +465,7 @@ impl RemittanceSplit {
     /// - `Unauthorized` if `caller` is not the active pause admin
     pub fn unpause(env: Env, caller: Address) -> Result<(), RemittanceSplitError> {
         caller.require_auth();
+        Self::extend_instance_ttl(&env);
         let config: SplitConfig = env
             .storage()
             .instance()
@@ -486,12 +491,14 @@ impl RemittanceSplit {
         Self::get_global_paused(&env)
     }
     pub fn get_version(env: Env) -> u32 {
+        Self::extend_instance_ttl(&env);
         env.storage()
             .instance()
             .get(&symbol_short!("VERSION"))
             .unwrap_or(CONTRACT_VERSION)
     }
     fn get_upgrade_admin(env: &Env) -> Option<Address> {
+        Self::extend_instance_ttl(env);
         env.storage().instance().get(&symbol_short!("UPG_ADM"))
     }
     /// Set or transfer the upgrade admin role.
@@ -595,6 +602,7 @@ impl RemittanceSplit {
         new_version: u32,
     ) -> Result<(), RemittanceSplitError> {
         caller.require_auth();
+        Self::extend_instance_ttl(&env);
         Self::require_not_paused(&env)?;
         let config: SplitConfig = env
             .storage()
@@ -827,6 +835,7 @@ impl RemittanceSplit {
     }
 
     pub fn get_split(env: &Env) -> Vec<u32> {
+        Self::extend_instance_ttl(env);
         env.storage()
             .instance()
             .get(&symbol_short!("SPLIT"))
@@ -834,6 +843,7 @@ impl RemittanceSplit {
     }
 
     pub fn get_config(env: Env) -> Option<SplitConfig> {
+        Self::extend_instance_ttl(&env);
         env.storage().instance().get(&symbol_short!("CONFIG"))
     }
 
@@ -1113,6 +1123,7 @@ impl RemittanceSplit {
         request: DistributeUsdcRequest,
         request_hash: Bytes,
     ) -> Result<bool, RemittanceSplitError> {
+        Self::extend_instance_ttl(&env);
         // Validate amount
         if request.total_amount <= 0 {
             Self::append_audit(&env, symbol_short!("distH"), &request.from, false);
@@ -1212,6 +1223,7 @@ impl RemittanceSplit {
     }
 
     fn get_nonce_value(env: &Env, address: &Address) -> u64 {
+        Self::extend_instance_ttl(env);
         let nonces: Option<Map<Address, u64>> =
             env.storage().instance().get(&symbol_short!("NONCES"));
         nonces
@@ -1234,6 +1246,7 @@ impl RemittanceSplit {
         caller: Address,
     ) -> Result<Option<ExportSnapshot>, RemittanceSplitError> {
         caller.require_auth();
+        Self::extend_instance_ttl(&env);
         let config: SplitConfig = env
             .storage()
             .instance()
@@ -1403,27 +1416,17 @@ impl RemittanceSplit {
 
         // Import schedules to new storage
         for schedule in snapshot.schedules.iter() {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Schedule(schedule.id), &schedule);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Schedule(schedule.id),
-                INSTANCE_LIFETIME_THRESHOLD,
-                INSTANCE_BUMP_AMOUNT,
-            );
+            let key = DataKey::Schedule(schedule.id);
+            env.storage().persistent().set(&key, &schedule);
+            Self::extend_persistent_ttl(&env, &key);
         }
 
         // Reconstruct owner index
         let owner_ids: Vec<u32> = Vec::new(&env);
         // Schedule IDs are maintained in insertion order; Vec doesn't support sort
-        env.storage()
-            .persistent()
-            .set(&DataKey::OwnerSchedules(caller.clone()), &owner_ids);
-        env.storage().persistent().extend_ttl(
-            &DataKey::OwnerSchedules(caller.clone()),
-            INSTANCE_LIFETIME_THRESHOLD,
-            INSTANCE_BUMP_AMOUNT,
-        );
+        let index_key = DataKey::OwnerSchedules(caller.clone());
+        env.storage().persistent().set(&index_key, &owner_ids);
+        Self::extend_persistent_ttl(&env, &index_key);
 
         Self::increment_nonce(&env, &caller)?;
         Self::append_audit(&env, symbol_short!("import"), &caller, true);
@@ -1526,6 +1529,7 @@ impl RemittanceSplit {
     /// - Deterministic: identical `(from_index, limit)` on identical state always
     ///   returns the same page, enabling reliable replay by audit consumers.
     pub fn get_audit_log(env: Env, from_index: u32, limit: u32) -> AuditPage {
+        Self::extend_instance_ttl(&env);
         let log: Option<Vec<AuditEntry>> = env.storage().instance().get(&symbol_short!("AUDIT"));
         let log = log.unwrap_or_else(|| Vec::new(&env));
         let len = log.len();
@@ -1920,11 +1924,22 @@ impl RemittanceSplit {
         Ok([spending, savings, bills, insurance])
     }
 
-    /// Extend the TTL of instance storage
+    /// Extend the TTL of instance storage using INSTANCE_BUMP_AMOUNT / INSTANCE_LIFETIME_THRESHOLD
+    /// from remitwise-common.
     fn extend_instance_ttl(env: &Env) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+    }
+
+    /// Extend the TTL of a persistent storage entry using PERSISTENT_BUMP_AMOUNT /
+    /// PERSISTENT_LIFETIME_THRESHOLD from remitwise-common.
+    fn extend_persistent_ttl<K: IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K) {
+        env.storage().persistent().extend_ttl(
+            key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     fn sort_u32_vec(v: &mut Vec<u32>) {
@@ -2037,14 +2052,9 @@ impl RemittanceSplit {
         };
 
         // 1. Save individual schedule to persistent storage
-        env.storage()
-            .persistent()
-            .set(&DataKey::Schedule(next_schedule_id), &schedule);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Schedule(next_schedule_id),
-            INSTANCE_LIFETIME_THRESHOLD,
-            INSTANCE_BUMP_AMOUNT,
-        );
+        let sch_key = DataKey::Schedule(next_schedule_id);
+        env.storage().persistent().set(&sch_key, &schedule);
+        Self::extend_persistent_ttl(&env, &sch_key);
 
         // 2. Update owner's schedule index.
         // `next_schedule_id` is allocated as `current_max_id + 1`, so the
@@ -2052,14 +2062,9 @@ impl RemittanceSplit {
         // Read paths rely on this invariant.
         owner_schedules.push_back(next_schedule_id);
         // Vec doesn't support sort; IDs are maintained in insertion order
-        env.storage()
-            .persistent()
-            .set(&DataKey::OwnerSchedules(owner.clone()), &owner_schedules);
-        env.storage().persistent().extend_ttl(
-            &DataKey::OwnerSchedules(owner.clone()),
-            INSTANCE_LIFETIME_THRESHOLD,
-            INSTANCE_BUMP_AMOUNT,
-        );
+        let index_key = DataKey::OwnerSchedules(owner.clone());
+        env.storage().persistent().set(&index_key, &owner_schedules);
+        Self::extend_persistent_ttl(&env, &index_key);
 
         env.storage()
             .instance()
@@ -2147,14 +2152,8 @@ impl RemittanceSplit {
         schedule.interval = interval;
         schedule.recurring = interval > 0;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Schedule(schedule_id), &schedule);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Schedule(schedule_id),
-            INSTANCE_LIFETIME_THRESHOLD,
-            INSTANCE_BUMP_AMOUNT,
-        );
+        env.storage().persistent().set(&sch_key, &schedule);
+        Self::extend_persistent_ttl(&env, &sch_key);
 
         RemitwiseEvents::emit(
             &env,
@@ -2200,14 +2199,8 @@ impl RemittanceSplit {
 
         schedule.active = false;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Schedule(schedule_id), &schedule);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Schedule(schedule_id),
-            INSTANCE_LIFETIME_THRESHOLD,
-            INSTANCE_BUMP_AMOUNT,
-        );
+        env.storage().persistent().set(&sch_key, &schedule);
+        Self::extend_persistent_ttl(&env, &sch_key);
 
         RemitwiseEvents::emit(
             &env,
@@ -2313,14 +2306,16 @@ impl RemittanceSplit {
             .unwrap_or(0);
 
         for schedule_id in 1..=next_schedule_id {
+            let sch_key = DataKey::Schedule(schedule_id);
             let mut schedule = match env
                 .storage()
                 .persistent()
-                .get::<_, RemittanceSchedule>(&DataKey::Schedule(schedule_id))
+                .get::<_, RemittanceSchedule>(&sch_key)
             {
                 Some(s) => s,
                 None => continue, // Schedule was never created or was deleted
             };
+            Self::extend_persistent_ttl(&env, &sch_key);
 
             // Skip if not active or not yet due
             if !schedule.active || schedule.next_due > current_time {
@@ -2365,14 +2360,8 @@ impl RemittanceSplit {
             }
 
             // Persist the updated schedule
-            env.storage()
-                .persistent()
-                .set(&DataKey::Schedule(schedule_id), &schedule);
-            env.storage().persistent().extend_ttl(
-                &DataKey::Schedule(schedule_id),
-                INSTANCE_LIFETIME_THRESHOLD,
-                INSTANCE_BUMP_AMOUNT,
-            );
+            env.storage().persistent().set(&sch_key, &schedule);
+            Self::extend_persistent_ttl(&env, &sch_key);
 
             // Emit execution event
             RemitwiseEvents::emit(
@@ -2391,11 +2380,13 @@ impl RemittanceSplit {
     }
 
     pub fn get_remittance_schedules(env: Env, owner: Address) -> Vec<RemittanceSchedule> {
+        let index_key = DataKey::OwnerSchedules(owner.clone());
         let schedule_ids: Vec<u32> = env
             .storage()
             .persistent()
-            .get(&DataKey::OwnerSchedules(owner.clone()))
+            .get(&index_key)
             .unwrap_or_else(|| Vec::new(&env));
+        Self::extend_persistent_ttl(&env, &index_key);
 
         // Ensure deterministic ordering by sorting IDs ascending
         // This guarantees consistent results regardless of storage order
@@ -2403,8 +2394,10 @@ impl RemittanceSplit {
 
         let mut result = Vec::new(&env);
         for id in schedule_ids.iter() {
-            if let Some(schedule) = env.storage().persistent().get(&DataKey::Schedule(id)) {
+            let sch_key = DataKey::Schedule(id);
+            if let Some(schedule) = env.storage().persistent().get(&sch_key) {
                 result.push_back(schedule);
+                Self::extend_persistent_ttl(&env, &sch_key);
             }
         }
         result
@@ -2442,11 +2435,13 @@ impl RemittanceSplit {
         from_index: u32,
         limit: u32,
     ) -> SchedulePage {
+        let index_key = DataKey::OwnerSchedules(owner.clone());
         let schedule_ids: Vec<u32> = env
             .storage()
             .persistent()
-            .get(&DataKey::OwnerSchedules(owner.clone()))
+            .get(&index_key)
             .unwrap_or_else(|| Vec::new(&env));
+        Self::extend_persistent_ttl(&env, &index_key);
 
         // Vec items are already retrieved in order; ensure deterministic traversal
         // by processing sequentially without mutating the order
@@ -2466,8 +2461,10 @@ impl RemittanceSplit {
         let mut items = Vec::new(&env);
         for i in from_index..end {
             if let Some(id) = schedule_ids.get(i) {
-                if let Some(schedule) = env.storage().persistent().get(&DataKey::Schedule(id)) {
+                let sch_key = DataKey::Schedule(id);
+                if let Some(schedule) = env.storage().persistent().get(&sch_key) {
                     items.push_back(schedule);
+                    Self::extend_persistent_ttl(&env, &sch_key);
                 }
             }
         }
@@ -2483,9 +2480,12 @@ impl RemittanceSplit {
     }
 
     pub fn get_remittance_schedule(env: Env, schedule_id: u32) -> Option<RemittanceSchedule> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Schedule(schedule_id))
+        let sch_key = DataKey::Schedule(schedule_id);
+        let res = env.storage().persistent().get(&sch_key);
+        if res.is_some() {
+            Self::extend_persistent_ttl(&env, &sch_key);
+        }
+        res
     }
 
     /// Get a single page of remittance schedules for `owner` using cursor-based pagination.
@@ -2510,11 +2510,13 @@ impl RemittanceSplit {
         cursor: u32,
         limit: u32,
     ) -> SchedulePage {
+        let index_key = DataKey::OwnerSchedules(owner.clone());
         let mut schedule_ids: Vec<u32> = env
             .storage()
             .persistent()
-            .get(&DataKey::OwnerSchedules(owner.clone()))
+            .get(&index_key)
             .unwrap_or_else(|| Vec::new(&env));
+        Self::extend_persistent_ttl(&env, &index_key);
 
         sort_u32_vec_ascending(&mut schedule_ids);
 
@@ -2533,8 +2535,10 @@ impl RemittanceSplit {
         let mut items = Vec::new(&env);
         for i in cursor..end {
             if let Some(id) = schedule_ids.get(i) {
-                if let Some(schedule) = env.storage().persistent().get(&DataKey::Schedule(id)) {
+                let sch_key = DataKey::Schedule(id);
+                if let Some(schedule) = env.storage().persistent().get(&sch_key) {
                     items.push_back(schedule);
+                    Self::extend_persistent_ttl(&env, &sch_key);
                 }
             }
         }

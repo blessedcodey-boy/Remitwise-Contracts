@@ -236,6 +236,63 @@ fn test_request_hash_deterministic() {
     assert_eq!(hash1.len(), 32);
 }
 
+#[test]
+fn test_ttl_extensions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, owner, token_addr, _stellar_client) = setup_split(&env, 40, 30, 20, 10);
+
+    // 1. Check Instance TTL extension (CONFIG)
+    // Initial sequence is 0. Threshold is INSTANCE_LIFETIME_THRESHOLD.
+    let threshold = INSTANCE_LIFETIME_THRESHOLD;
+    
+    // Advance to threshold - 1
+    env.ledger().set_sequence(threshold - 1);
+    
+    // Access CONFIG
+    let config = client.get_config();
+    assert!(config.is_some(), "Config should exist before expiration");
+
+    // After access, TTL should be bumped to INSTANCE_BUMP_AMOUNT
+    // If we advance to threshold + 1, it should still exist
+    env.ledger().set_sequence(threshold + 1);
+    let config = client.get_config();
+    assert!(config.is_some(), "Config should exist after TTL bump");
+
+    // 2. Check Persistent TTL extension (Schedules)
+    let amount = 100i128;
+    let next_due = env.ledger().timestamp() + 3600;
+    let interval = 86400u64;
+    let schedule_id = client.create_remittance_schedule(&owner, &amount, &next_due, &interval);
+
+    let p_threshold = PERSISTENT_LIFETIME_THRESHOLD;
+    let p_bump = PERSISTENT_BUMP_AMOUNT;
+
+    // Advance to p_threshold - 1 from current sequence
+    let current_seq = env.ledger().sequence();
+    env.ledger().set_sequence(current_seq + p_threshold - 1);
+
+    // Access Schedule
+    let schedule = client.get_remittance_schedule(&schedule_id);
+    assert!(schedule.is_some(), "Schedule should exist before expiration");
+
+    // Advance beyond original threshold
+    env.ledger().set_sequence(current_seq + p_threshold + 1);
+    let schedule = client.get_remittance_schedule(&schedule_id);
+    assert!(schedule.is_some(), "Schedule should exist after TTL bump");
+
+    // 3. Multiple sequential bumps
+    for _ in 0..3 {
+        let seq = env.ledger().sequence();
+        env.ledger().set_sequence(seq + p_threshold - 1);
+        assert!(client.get_remittance_schedule(&schedule_id).is_some());
+    }
+    
+    // Final check
+    assert!(client.get_remittance_schedule(&schedule_id).is_some());
+}
+
 /// Test that changing any parameter changes the hash (no collisions)
 #[test]
 fn test_request_hash_changes_with_parameters() {
