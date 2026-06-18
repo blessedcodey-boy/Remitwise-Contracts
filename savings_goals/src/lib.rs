@@ -314,12 +314,8 @@ impl SavingsGoalContract {
             return Err(SavingsGoalError::InvalidGoalName);
         }
 
-        let mut string_bytes = alloc::vec::Vec::new();
-        name.to_string()
-            .as_bytes()
-            .iter()
-            .for_each(|&b| string_bytes.push(b));
-        for byte in string_bytes {
+        for i in 0..name_len {
+            let byte = name.get(i as u32).unwrap_or(0);
             // Allow printable ASCII characters (32 to 126 inclusive)
             if byte < 32 || byte > 126 {
                 return Err(SavingsGoalError::InvalidGoalName);

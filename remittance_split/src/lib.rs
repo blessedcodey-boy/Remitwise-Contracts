@@ -2381,17 +2381,13 @@ impl RemittanceSplit {
     }
 
     pub fn get_remittance_schedules(env: Env, owner: Address) -> Vec<RemittanceSchedule> {
-        let index_key = DataKey::OwnerSchedules(owner.clone());
+        let index_key = DataKey::OwnerSchedules(owner);
         let schedule_ids: Vec<u32> = env
             .storage()
             .persistent()
             .get(&index_key)
             .unwrap_or_else(|| Vec::new(&env));
         Self::extend_persistent_ttl(&env, &index_key);
-
-        // Ensure deterministic ordering by sorting IDs ascending
-        // This guarantees consistent results regardless of storage order
-        // Vec doesn't support sort; IDs are maintained in insertion order
 
         let mut result = Vec::new(&env);
         for id in schedule_ids.iter() {
@@ -2511,15 +2507,13 @@ impl RemittanceSplit {
         cursor: u32,
         limit: u32,
     ) -> SchedulePage {
-        let index_key = DataKey::OwnerSchedules(owner.clone());
-        let mut schedule_ids: Vec<u32> = env
+        let index_key = DataKey::OwnerSchedules(owner);
+        let schedule_ids: Vec<u32> = env
             .storage()
             .persistent()
             .get(&index_key)
             .unwrap_or_else(|| Vec::new(&env));
         Self::extend_persistent_ttl(&env, &index_key);
-
-        sort_u32_vec_ascending(&mut schedule_ids);
 
         let len = schedule_ids.len();
         let cap = clamp_limit(limit);
